@@ -1,0 +1,1461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FLAC Player</title>
+<style>
+  /* ===== RESET & BASE ===== */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #121212;
+    --surface: #1e1e1e;
+    --surface2: #282828;
+    --surface3: #333;
+    --border: #3a3a3a;
+    --text: #e8e8e8;
+    --text-dim: #999;
+    --accent: #1db954;
+    --accent-dim: #158a3e;
+    --danger: #e05555;
+    --player-h: 90px;
+    --sidebar-w: 260px;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 13px;
+    overflow: hidden;
+  }
+
+  button {
+    background: var(--surface3);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    transition: background 0.15s;
+  }
+  button:hover { background: #444; }
+  button.active { background: var(--accent); border-color: var(--accent); color: #000; }
+
+  input[type="text"], select {
+    background: var(--surface3);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-family: inherit;
+    font-size: 12px;
+    outline: none;
+  }
+  input[type="text"]:focus, select:focus { border-color: var(--accent); }
+  select option { background: var(--surface3); }
+
+  /* ===== LAYOUT ===== */
+  #app {
+    display: grid;
+    grid-template-columns: var(--sidebar-w) 1fr 280px;
+    grid-template-rows: 1fr var(--player-h);
+    height: 100vh;
+  }
+
+  /* ===== SIDEBAR: LIBRARY ===== */
+  #library-panel {
+    grid-row: 1;
+    grid-column: 1;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #library-header {
+    padding: 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  #library-header h2 {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+
+  #folder-select-btn {
+    width: 100%;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #000;
+    font-weight: bold;
+  }
+  #folder-select-btn:hover { background: var(--accent-dim); }
+
+  #search-input {
+    width: 100%;
+  }
+
+  #file-tree {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* Tree items */
+  .tree-folder { user-select: none; }
+
+  .folder-row {
+    display: flex;
+    align-items: center;
+    padding: 5px 8px;
+    cursor: pointer;
+    gap: 5px;
+  }
+  .folder-row:hover { background: var(--surface2); }
+
+  .folder-toggle { color: var(--text-dim); width: 12px; flex-shrink: 0; }
+  .folder-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .folder-count { color: var(--text-dim); font-size: 10px; flex-shrink: 0; }
+  .folder-play-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    padding: 0 3px;
+    font-size: 11px;
+    opacity: 0;
+    flex-shrink: 0;
+  }
+  .folder-row:hover .folder-play-btn { opacity: 1; }
+
+  .folder-children { display: none; padding-left: 16px; }
+  .folder-children.open { display: block; }
+
+  .song-row {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    cursor: pointer;
+    gap: 5px;
+  }
+  .song-row:hover { background: var(--surface2); }
+  .song-row.playing { color: var(--accent); }
+
+  .song-play-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    padding: 0 3px;
+    font-size: 10px;
+    opacity: 0;
+    flex-shrink: 0;
+  }
+  .song-row:hover .song-play-btn { opacity: 1; }
+
+  .song-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ===== MAIN CONTENT ===== */
+  #main-panel {
+    grid-row: 1;
+    grid-column: 2;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #main-header {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  #main-header h2 {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: var(--accent);
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+
+  #playlist-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    flex: 1;
+  }
+
+  #playlist-select { max-width: 160px; flex: 1; }
+
+  /* Queue / Playlist tabs */
+  #content-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-btn {
+    flex: 1;
+    border: none;
+    border-radius: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--text-dim);
+    padding: 8px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); background: none; }
+
+  .tab-content { display: none; flex: 1; overflow-y: auto; }
+  .tab-content.active { display: block; }
+
+  /* Queue list */
+  .queue-item {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    gap: 8px;
+    cursor: pointer;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  .queue-item:hover { background: var(--surface2); }
+  .queue-item.playing { background: #1a2a1e; border-left: 2px solid var(--accent); }
+
+  .queue-idx { color: var(--text-dim); width: 24px; text-align: right; font-size: 11px; flex-shrink: 0; }
+  .queue-info { flex: 1; overflow: hidden; }
+  .queue-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .queue-album { color: var(--text-dim); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .queue-remove {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    padding: 0 4px;
+    opacity: 0;
+    font-size: 14px;
+    line-height: 1;
+  }
+  .queue-item:hover .queue-remove { opacity: 1; }
+  .queue-remove:hover { color: var(--danger); }
+
+  /* ===== RIGHT PANEL: NOW PLAYING + PLAYLIST EDITOR ===== */
+  #right-panel {
+    grid-row: 1;
+    grid-column: 3;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #now-playing-section {
+    padding: 14px;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+  }
+  #now-playing-section h3 {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  #np-title {
+    font-size: 13px;
+    font-weight: bold;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-bottom: 3px;
+  }
+  #np-album {
+    color: var(--text-dim);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Visualizer bars (CSS animation) */
+  #visualizer {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 3px;
+    height: 30px;
+    margin: 10px 0;
+  }
+  .v-bar {
+    width: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+    animation: none;
+    height: 3px;
+  }
+  .playing-active .v-bar {
+    animation: vbar 0.8s ease-in-out infinite alternate;
+  }
+  .v-bar:nth-child(1) { animation-delay: 0s; }
+  .v-bar:nth-child(2) { animation-delay: 0.1s; }
+  .v-bar:nth-child(3) { animation-delay: 0.2s; }
+  .v-bar:nth-child(4) { animation-delay: 0.05s; }
+  .v-bar:nth-child(5) { animation-delay: 0.15s; }
+  .v-bar:nth-child(6) { animation-delay: 0.25s; }
+  .v-bar:nth-child(7) { animation-delay: 0.08s; }
+  .v-bar:nth-child(8) { animation-delay: 0.18s; }
+  @keyframes vbar {
+    from { height: 3px; }
+    to { height: var(--h, 20px); }
+  }
+
+  /* Playlist editor in right panel */
+  #playlist-editor {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #playlist-editor-header {
+    padding: 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  #playlist-editor-header h3 {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+  #pl-name-display {
+    color: var(--text-dim);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #playlist-song-list {
+    flex: 1;
+    overflow-y: auto;
+  }
+  .pl-song-item {
+    display: flex;
+    align-items: center;
+    padding: 5px 10px;
+    gap: 6px;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  .pl-song-item:hover { background: var(--surface2); }
+  .pl-song-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .pl-song-remove {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    padding: 0 3px;
+    font-size: 13px;
+    opacity: 0;
+  }
+  .pl-song-item:hover .pl-song-remove { opacity: 1; }
+  .pl-song-remove:hover { color: var(--danger); }
+
+  /* ===== PLAYER BAR ===== */
+  #player-bar {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    background: #0a0a0a;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 16px;
+    height: var(--player-h);
+  }
+
+  #player-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .ctrl-btn {
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 16px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    padding: 0;
+    flex-shrink: 0;
+    transition: color 0.15s, background 0.15s;
+  }
+  .ctrl-btn:hover { color: var(--accent); background: rgba(255,255,255,0.05); }
+  .ctrl-btn.active { color: var(--accent); }
+
+  #play-pause-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+    background: var(--accent);
+    color: #000;
+    border-radius: 50%;
+  }
+  #play-pause-btn:hover { background: var(--accent-dim); color: #000; }
+
+  #progress-section {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  #time-current, #time-total {
+    color: var(--text-dim);
+    font-size: 11px;
+    width: 38px;
+    flex-shrink: 0;
+  }
+  #time-total { text-align: right; }
+
+  .range-container {
+    flex: 1;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    position: relative;
+  }
+  .range-track {
+    width: 100%;
+    height: 3px;
+    background: var(--surface3);
+    border-radius: 2px;
+    position: relative;
+    overflow: hidden;
+  }
+  .range-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    pointer-events: none;
+    transition: width 0.1s linear;
+  }
+  .range-container:hover .range-track { height: 5px; }
+
+  #volume-section {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    width: 140px;
+  }
+
+  #mute-btn {
+    background: none;
+    border: none;
+    font-size: 14px;
+    padding: 0;
+    width: 22px;
+    flex-shrink: 0;
+  }
+
+  /* ===== CONTEXT MENU ===== */
+  #ctx-menu {
+    position: fixed;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 0;
+    z-index: 9999;
+    min-width: 180px;
+    display: none;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  .ctx-item {
+    padding: 7px 14px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .ctx-item:hover { background: var(--surface3); color: var(--accent); }
+  .ctx-sep { height: 1px; background: var(--border); margin: 3px 0; }
+
+  /* ===== EMPTY STATE ===== */
+  #empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    gap: 10px;
+    padding: 20px;
+    text-align: center;
+  }
+  #empty-state .icon { font-size: 40px; }
+  #empty-state p { font-size: 12px; line-height: 1.6; }
+
+  /* drag over queue item */
+  .queue-item.drag-over { border-top: 2px solid var(--accent); }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===== SIDEBAR: LIBRARY ===== -->
+  <div id="library-panel">
+    <div id="library-header">
+      <h2>Library</h2>
+      <button id="folder-select-btn">📁 Select Music Folder</button>
+      <input type="file" id="folder-input" webkitdirectory multiple accept=".flac,.mp3,.ogg,.wav,.m4a" style="display:none">
+      <input type="text" id="search-input" placeholder="Search songs & folders…">
+    </div>
+    <div id="file-tree">
+      <div id="empty-state">
+        <div class="icon">🎵</div>
+        <p>Select a folder containing<br>your music &amp; playlist.json</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MAIN PANEL ===== -->
+  <div id="main-panel">
+    <div id="main-header">
+      <h2>Queue / Playlists</h2>
+      <div id="playlist-controls">
+        <select id="playlist-select"><option value="">— No Playlist —</option></select>
+        <button id="new-playlist-btn">+ New</button>
+        <button id="save-queue-as-pl-btn">Save Queue</button>
+        <button id="load-pl-btn">Load</button>
+      </div>
+    </div>
+    <div id="content-tabs">
+      <button class="tab-btn active" data-tab="queue">Queue</button>
+      <button class="tab-btn" data-tab="playlist">Playlist</button>
+    </div>
+    <div id="tab-queue" class="tab-content active">
+      <div id="queue-list"></div>
+    </div>
+    <div id="tab-playlist" class="tab-content">
+      <div id="playlist-view-list"></div>
+    </div>
+  </div>
+
+  <!-- ===== RIGHT PANEL ===== -->
+  <div id="right-panel">
+    <div id="now-playing-section">
+      <h3>Now Playing</h3>
+      <div id="visualizer">
+        <div class="v-bar" style="--h:28px"></div>
+        <div class="v-bar" style="--h:18px"></div>
+        <div class="v-bar" style="--h:24px"></div>
+        <div class="v-bar" style="--h:12px"></div>
+        <div class="v-bar" style="--h:22px"></div>
+        <div class="v-bar" style="--h:16px"></div>
+        <div class="v-bar" style="--h:26px"></div>
+        <div class="v-bar" style="--h:20px"></div>
+      </div>
+      <div id="np-title">—</div>
+      <div id="np-album">No track loaded</div>
+    </div>
+    <div id="playlist-editor">
+      <div id="playlist-editor-header">
+        <h3>Playlist Editor</h3>
+        <div id="pl-name-display">No playlist selected</div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;">
+          <button id="save-pl-btn">💾 Save (in-memory)</button>
+          <button id="clear-pl-btn">🗑 Clear</button>
+        </div>
+      </div>
+      <div id="playlist-song-list"></div>
+    </div>
+  </div>
+
+  <!-- ===== PLAYER BAR ===== -->
+  <div id="player-bar">
+    <div id="player-controls">
+      <button class="ctrl-btn" id="shuffle-btn" title="Shuffle">⇄</button>
+      <button class="ctrl-btn" id="prev-btn" title="Previous">⏮</button>
+      <button class="ctrl-btn" id="play-pause-btn" title="Play/Pause">▶</button>
+      <button class="ctrl-btn" id="next-btn" title="Next">⏭</button>
+      <button class="ctrl-btn" id="loop-btn" title="Loop">↺</button>
+    </div>
+    <div id="progress-section">
+      <span id="time-current">0:00</span>
+      <div class="range-container" id="progress-container">
+        <div class="range-track">
+          <div class="range-fill" id="progress-fill" style="width:0%"></div>
+        </div>
+      </div>
+      <span id="time-total">0:00</span>
+    </div>
+    <div id="volume-section">
+      <button class="ctrl-btn" id="mute-btn" title="Mute">🔊</button>
+      <div class="range-container" id="volume-container" style="flex:1">
+        <div class="range-track">
+          <div class="range-fill" id="volume-fill" style="width:100%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Context Menu -->
+<div id="ctx-menu">
+  <div class="ctx-item" id="ctx-play">▶ Play</div>
+  <div class="ctx-item" id="ctx-add-next">Add to Queue (next)</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-add-pl">Add to Current Playlist</div>
+</div>
+
+<audio id="audio-el"></audio>
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+const state = {
+  // Raw file objects keyed by path string "FolderName/song.flac"
+  files: {},          // { "path": File }
+  // Parsed tree: { folderName: { songs: [{name, path}] } }
+  // Root songs at key "" (empty string)
+  tree: {},
+
+  // Queue: array of {name, path, album}
+  queue: [],
+  shuffledQueue: null,   // null = not shuffled; array = shuffled order
+  queueIndex: 0,
+
+  // Loop: 0=none, 1=all, 2=one
+  loopMode: 0,
+  shuffleOn: false,
+
+  // Playlists loaded from JSON + in-memory created ones
+  // { playlistName: [songName, ...] }
+  playlists: {},
+  currentPlaylist: null,     // name of currently selected playlist
+  currentPlaylistSongs: [],  // resolved {name, path, album}
+
+  // Context menu target
+  ctxTarget: null,           // {name, path, album}
+};
+
+// ============================================================
+// AUDIO
+// ============================================================
+const audio = document.getElementById('audio-el');
+let blobUrls = {}; // cache path -> objectURL
+
+function getActiveQueue() {
+  return state.shuffleOn && state.shuffledQueue ? state.shuffledQueue : state.queue;
+}
+
+function currentSong() {
+  const q = getActiveQueue();
+  return q[state.queueIndex] || null;
+}
+
+function play(song) {
+  if (!song || !state.files[song.path]) return;
+  // Revoke old
+  if (audio.src && audio.src.startsWith('blob:')) {
+    // Don't revoke immediately, might still be used
+  }
+  const file = state.files[song.path];
+  const url = blobUrls[song.path] || URL.createObjectURL(file);
+  blobUrls[song.path] = url;
+  audio.src = url;
+  audio.play().catch(()=>{});
+  updateNowPlaying(song);
+  updateQueueHighlight();
+  updateTreeHighlight();
+}
+
+function playCurrent() {
+  const s = currentSong();
+  if (s) play(s);
+}
+
+function playNext() {
+  const q = getActiveQueue();
+  if (!q.length) return;
+  if (state.loopMode === 2) { audio.currentTime = 0; audio.play(); return; }
+  let next = state.queueIndex + 1;
+  if (next >= q.length) {
+    if (state.loopMode === 1) next = 0;
+    else return; // stop
+  }
+  state.queueIndex = next;
+  playCurrent();
+}
+
+function playPrev() {
+  if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+  const q = getActiveQueue();
+  let prev = state.queueIndex - 1;
+  if (prev < 0) prev = state.loopMode === 1 ? q.length - 1 : 0;
+  state.queueIndex = prev;
+  playCurrent();
+}
+
+audio.addEventListener('ended', playNext);
+audio.addEventListener('timeupdate', updateProgress);
+audio.addEventListener('loadedmetadata', () => {
+  document.getElementById('time-total').textContent = formatTime(audio.duration);
+});
+
+// ============================================================
+// PROGRESS & VOLUME
+// ============================================================
+function updateProgress() {
+  const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('time-current').textContent = formatTime(audio.currentTime);
+}
+
+function formatTime(s) {
+  if (!s || isNaN(s)) return '0:00';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return m + ':' + String(sec).padStart(2,'0');
+}
+
+// Progress click/drag
+let seekDragging = false;
+const progContainer = document.getElementById('progress-container');
+function seekFromEvent(e) {
+  const rect = progContainer.getBoundingClientRect();
+  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  if (audio.duration) audio.currentTime = pct * audio.duration;
+}
+progContainer.addEventListener('mousedown', e => { seekDragging = true; seekFromEvent(e); });
+document.addEventListener('mousemove', e => { if (seekDragging) seekFromEvent(e); });
+document.addEventListener('mouseup', () => seekDragging = false);
+
+// Volume click/drag
+let volDragging = false;
+const volContainer = document.getElementById('volume-container');
+function volumeFromEvent(e) {
+  const rect = volContainer.getBoundingClientRect();
+  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  audio.volume = pct;
+  document.getElementById('volume-fill').style.width = (pct*100) + '%';
+  document.getElementById('mute-btn').textContent = pct === 0 ? '🔇' : '🔊';
+}
+volContainer.addEventListener('mousedown', e => { volDragging = true; volumeFromEvent(e); });
+document.addEventListener('mousemove', e => { if (volDragging) volumeFromEvent(e); });
+document.addEventListener('mouseup', () => volDragging = false);
+
+document.getElementById('mute-btn').addEventListener('click', () => {
+  audio.muted = !audio.muted;
+  document.getElementById('mute-btn').textContent = audio.muted ? '🔇' : '🔊';
+});
+
+// ============================================================
+// CONTROLS
+// ============================================================
+document.getElementById('play-pause-btn').addEventListener('click', () => {
+  if (!audio.src) { playCurrent(); return; }
+  if (audio.paused) audio.play();
+  else audio.pause();
+});
+audio.addEventListener('play', () => {
+  document.getElementById('play-pause-btn').textContent = '⏸';
+  document.getElementById('visualizer').classList.add('playing-active');
+});
+audio.addEventListener('pause', () => {
+  document.getElementById('play-pause-btn').textContent = '▶';
+  document.getElementById('visualizer').classList.remove('playing-active');
+});
+
+document.getElementById('prev-btn').addEventListener('click', playPrev);
+document.getElementById('next-btn').addEventListener('click', playNext);
+
+// Loop button
+const loopBtn = document.getElementById('loop-btn');
+const loopLabels = ['↺', '↺¹', '↻'];
+const loopTitles = ['No Loop', 'Loop All', 'Loop One'];
+loopBtn.addEventListener('click', () => {
+  state.loopMode = (state.loopMode + 1) % 3;
+  loopBtn.textContent = loopLabels[state.loopMode];
+  loopBtn.title = loopTitles[state.loopMode];
+  loopBtn.classList.toggle('active', state.loopMode > 0);
+});
+
+// Shuffle button
+const shuffleBtn = document.getElementById('shuffle-btn');
+shuffleBtn.addEventListener('click', () => {
+  state.shuffleOn = !state.shuffleOn;
+  shuffleBtn.classList.toggle('active', state.shuffleOn);
+  if (state.shuffleOn) {
+    // Shuffle queue, keep current song first
+    const cur = currentSong();
+    const rest = state.queue.filter(s => s !== cur);
+    for (let i = rest.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [rest[i], rest[j]] = [rest[j], rest[i]];
+    }
+    state.shuffledQueue = cur ? [cur, ...rest] : rest;
+    state.queueIndex = 0;
+  } else {
+    // Restore: find current in original queue
+    const cur = currentSong();
+    state.shuffledQueue = null;
+    if (cur) {
+      const idx = state.queue.findIndex(s => s.path === cur.path);
+      state.queueIndex = idx >= 0 ? idx : 0;
+    }
+  }
+  renderQueue();
+});
+
+// ============================================================
+// FILE LOADING
+// ============================================================
+document.getElementById('folder-select-btn').addEventListener('click', () => {
+  document.getElementById('folder-input').click();
+});
+
+document.getElementById('folder-input').addEventListener('change', async function() {
+  const files = Array.from(this.files);
+  if (!files.length) return;
+
+  // Reset
+  state.files = {};
+  state.tree = {};
+  blobUrls = {};
+  state.queue = [];
+  state.queueIndex = 0;
+  state.playlists = {};
+
+  // Collect music files
+  const audioExts = ['.flac','.mp3','.ogg','.wav','.m4a'];
+  let playlistJson = null;
+
+  for (const file of files) {
+    const relPath = file.webkitRelativePath;
+    const parts = relPath.split('/');
+    // parts[0] = selected folder (skip), parts[1...] = actual path
+    const innerParts = parts.slice(1); // e.g. ["Album", "song.flac"] or ["song.flac"] or ["playlist.json"]
+
+    if (innerParts.length === 1 && innerParts[0] === 'playlist.json') {
+      playlistJson = file;
+      continue;
+    }
+
+    const ext = innerParts[innerParts.length - 1].toLowerCase();
+    const hasAudioExt = audioExts.some(e => ext.endsWith(e.slice(1)));
+    if (!hasAudioExt) continue;
+
+    // Build tree key
+    const songName = innerParts[innerParts.length - 1];
+    const album = innerParts.length > 1 ? innerParts.slice(0, -1).join('/') : '';
+    const treePath = innerParts.join('/');
+
+    state.files[treePath] = file;
+    if (!state.tree[album]) state.tree[album] = [];
+    state.tree[album].push({ name: songName, path: treePath, album });
+  }
+
+  // Load playlist.json
+  if (playlistJson) {
+    try {
+      const text = await playlistJson.text();
+      state.playlists = JSON.parse(text);
+    } catch(e) {
+      console.warn('Failed to parse playlist.json:', e);
+    }
+  }
+
+  // Build initial queue: all songs sorted by album then name
+  const allSongs = [];
+  const albums = Object.keys(state.tree).sort();
+  for (const album of albums) {
+    const songs = state.tree[album].sort((a,b) => a.name.localeCompare(b.name));
+    allSongs.push(...songs);
+  }
+  state.queue = allSongs;
+  state.queueIndex = 0;
+
+  renderTree();
+  renderQueue();
+  renderPlaylistDropdown();
+  updateNowPlaying(null);
+});
+
+// ============================================================
+// RENDER: FILE TREE
+// ============================================================
+function renderTree(searchTerm = '') {
+  const container = document.getElementById('file-tree');
+  container.innerHTML = '';
+
+  const term = searchTerm.toLowerCase().trim();
+  const albums = Object.keys(state.tree).sort();
+
+  // Root songs (album === "")
+  const rootSongs = state.tree[''] || [];
+  // Filter root songs
+  const filteredRoot = term ? rootSongs.filter(s => s.name.toLowerCase().includes(term)) : rootSongs;
+
+  for (const song of filteredRoot) {
+    container.appendChild(makeSongRow(song, false));
+  }
+
+  for (const album of albums) {
+    if (!album) continue; // skip root, already handled
+    const songs = state.tree[album].sort((a,b) => a.name.localeCompare(b.name));
+    const filteredSongs = term ? songs.filter(s =>
+      s.name.toLowerCase().includes(term) || album.toLowerCase().includes(term)
+    ) : songs;
+
+    if (term && filteredSongs.length === 0) continue;
+
+    const folderEl = document.createElement('div');
+    folderEl.className = 'tree-folder';
+
+    const row = document.createElement('div');
+    row.className = 'folder-row';
+
+    const toggle = document.createElement('span');
+    toggle.className = 'folder-toggle';
+    toggle.textContent = term ? '▾' : '▸';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'folder-name';
+    nameEl.textContent = album;
+    nameEl.title = album;
+
+    const count = document.createElement('span');
+    count.className = 'folder-count';
+    count.textContent = `${songs.length}`;
+
+    const playBtn = document.createElement('button');
+    playBtn.className = 'folder-play-btn';
+    playBtn.textContent = '▶';
+    playBtn.title = 'Play folder';
+
+    row.appendChild(toggle);
+    row.appendChild(nameEl);
+    row.appendChild(count);
+    row.appendChild(playBtn);
+
+    const children = document.createElement('div');
+    children.className = 'folder-children' + (term ? ' open' : '');
+    toggle.textContent = (term ? '▾' : '▸');
+
+    for (const song of filteredSongs) {
+      children.appendChild(makeSongRow(song, true));
+    }
+
+    // Toggle expand/collapse
+    row.addEventListener('click', e => {
+      if (e.target === playBtn) return;
+      const open = children.classList.toggle('open');
+      toggle.textContent = open ? '▾' : '▸';
+    });
+
+    // Play folder
+    playBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const albumSongs = state.tree[album].sort((a,b) => a.name.localeCompare(b.name));
+      setQueueFrom(albumSongs);
+    });
+
+    // Context menu on folder row
+    row.addEventListener('contextmenu', e => {
+      e.preventDefault();
+    });
+
+    folderEl.appendChild(row);
+    folderEl.appendChild(children);
+    container.appendChild(folderEl);
+  }
+}
+
+function makeSongRow(song, indented) {
+  const row = document.createElement('div');
+  row.className = 'song-row';
+  row.dataset.path = song.path;
+
+  const playBtn = document.createElement('button');
+  playBtn.className = 'song-play-btn';
+  playBtn.textContent = '▶';
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'song-name';
+  nameEl.textContent = song.name;
+  nameEl.title = song.name;
+
+  row.appendChild(playBtn);
+  row.appendChild(nameEl);
+
+  // Click: set queue to this song (within its album) + play
+  row.addEventListener('click', e => {
+    if (e.target === playBtn) return;
+    jumpToSong(song);
+  });
+  playBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    jumpToSong(song);
+  });
+
+  // Context menu
+  row.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    showContextMenu(e, song);
+  });
+
+  return row;
+}
+
+function jumpToSong(song) {
+  // Find in current queue or add
+  let idx = state.queue.findIndex(s => s.path === song.path);
+  if (idx === -1) {
+    // Play from all songs starting here
+    const albums = Object.keys(state.tree).sort();
+    const allSongs = [];
+    for (const album of albums) {
+      allSongs.push(...state.tree[album].sort((a,b) => a.name.localeCompare(b.name)));
+    }
+    state.queue = allSongs;
+    idx = state.queue.findIndex(s => s.path === song.path);
+  }
+  state.queueIndex = Math.max(0, idx);
+  state.shuffledQueue = null;
+  state.shuffleOn = false;
+  shuffleBtn.classList.remove('active');
+  playCurrent();
+  renderQueue();
+}
+
+function setQueueFrom(songs) {
+  state.queue = [...songs];
+  state.queueIndex = 0;
+  state.shuffledQueue = null;
+  state.shuffleOn = false;
+  shuffleBtn.classList.remove('active');
+  playCurrent();
+  renderQueue();
+}
+
+// ============================================================
+// RENDER: QUEUE
+// ============================================================
+function renderQueue() {
+  const container = document.getElementById('queue-list');
+  container.innerHTML = '';
+  const q = getActiveQueue();
+
+  if (!q.length) {
+    container.innerHTML = '<div style="color:var(--text-dim);padding:20px;text-align:center;font-size:12px;">Queue is empty</div>';
+    return;
+  }
+
+  q.forEach((song, i) => {
+    const item = document.createElement('div');
+    item.className = 'queue-item' + (i === state.queueIndex ? ' playing' : '');
+    item.draggable = true;
+    item.dataset.idx = i;
+
+    const idx = document.createElement('span');
+    idx.className = 'queue-idx';
+    idx.textContent = i + 1;
+
+    const info = document.createElement('div');
+    info.className = 'queue-info';
+
+    const title = document.createElement('div');
+    title.className = 'queue-title';
+    title.textContent = song.name;
+
+    const album = document.createElement('div');
+    album.className = 'queue-album';
+    album.textContent = song.album || 'Root';
+
+    info.appendChild(title);
+    info.appendChild(album);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'queue-remove';
+    removeBtn.textContent = '✕';
+    removeBtn.title = 'Remove from queue';
+
+    item.appendChild(idx);
+    item.appendChild(info);
+    item.appendChild(removeBtn);
+
+    // Click to jump
+    item.addEventListener('click', e => {
+      if (e.target === removeBtn) return;
+      state.queueIndex = i;
+      playCurrent();
+      renderQueue();
+    });
+
+    // Remove
+    removeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const q2 = getActiveQueue();
+      const removingCurrent = i === state.queueIndex;
+      if (state.shuffleOn && state.shuffledQueue) {
+        state.shuffledQueue.splice(i, 1);
+        // Also remove from base queue
+        const sp = q2[i]?.path;
+        const bi = state.queue.findIndex(s => s.path === sp);
+        if (bi !== -1) state.queue.splice(bi, 1);
+      } else {
+        state.queue.splice(i, 1);
+      }
+      if (removingCurrent) {
+        state.queueIndex = Math.min(state.queueIndex, getActiveQueue().length - 1);
+        playCurrent();
+      } else if (i < state.queueIndex) {
+        state.queueIndex--;
+      }
+      renderQueue();
+    });
+
+    // Drag-and-drop reorder (base queue only when not shuffled)
+    let dragSrcIdx = null;
+    item.addEventListener('dragstart', e => {
+      dragSrcIdx = i;
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    item.addEventListener('dragover', e => {
+      e.preventDefault();
+      item.classList.add('drag-over');
+    });
+    item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
+    item.addEventListener('drop', e => {
+      e.preventDefault();
+      item.classList.remove('drag-over');
+      if (dragSrcIdx === null || dragSrcIdx === i) return;
+      const targetQ = state.shuffleOn && state.shuffledQueue ? state.shuffledQueue : state.queue;
+      const [moved] = targetQ.splice(dragSrcIdx, 1);
+      targetQ.splice(i, 0, moved);
+      // Adjust queueIndex
+      if (dragSrcIdx === state.queueIndex) state.queueIndex = i;
+      else if (dragSrcIdx < state.queueIndex && i >= state.queueIndex) state.queueIndex--;
+      else if (dragSrcIdx > state.queueIndex && i <= state.queueIndex) state.queueIndex++;
+      renderQueue();
+      dragSrcIdx = null;
+    });
+
+    container.appendChild(item);
+  });
+
+  // Scroll to current
+  const playingEl = container.querySelector('.playing');
+  if (playingEl) playingEl.scrollIntoView({ block: 'nearest' });
+}
+
+// ============================================================
+// RENDER: PLAYLISTS
+// ============================================================
+function renderPlaylistDropdown() {
+  const sel = document.getElementById('playlist-select');
+  sel.innerHTML = '<option value="">— No Playlist —</option>';
+  for (const name of Object.keys(state.playlists)) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  }
+}
+
+function renderPlaylistView() {
+  const container = document.getElementById('playlist-view-list');
+  container.innerHTML = '';
+  const songs = state.currentPlaylistSongs;
+  if (!songs.length) {
+    container.innerHTML = '<div style="color:var(--text-dim);padding:20px;text-align:center;font-size:12px;">No songs in playlist</div>';
+    return;
+  }
+  songs.forEach((song, i) => {
+    const item = document.createElement('div');
+    item.className = 'queue-item';
+    item.innerHTML = `
+      <span class="queue-idx">${i+1}</span>
+      <div class="queue-info">
+        <div class="queue-title">${escHtml(song.name)}</div>
+        <div class="queue-album">${escHtml(song.album || 'Root')}</div>
+      </div>
+    `;
+    item.addEventListener('click', () => {
+      // Load playlist into queue and play this song
+      state.queue = [...state.currentPlaylistSongs];
+      state.queueIndex = i;
+      state.shuffledQueue = null;
+      playCurrent();
+      renderQueue();
+      switchTab('queue');
+    });
+    container.appendChild(item);
+  });
+}
+
+function renderPlaylistEditor() {
+  const container = document.getElementById('playlist-song-list');
+  const nameDisplay = document.getElementById('pl-name-display');
+  nameDisplay.textContent = state.currentPlaylist ? `Editing: ${state.currentPlaylist}` : 'No playlist selected';
+  container.innerHTML = '';
+
+  const songs = state.currentPlaylistSongs;
+  if (!songs.length) {
+    container.innerHTML = '<div style="color:var(--text-dim);padding:14px;font-size:12px;">Right-click songs in the library to add them here.</div>';
+    return;
+  }
+  songs.forEach((song, i) => {
+    const item = document.createElement('div');
+    item.className = 'pl-song-item';
+
+    const name = document.createElement('span');
+    name.className = 'pl-song-name';
+    name.textContent = song.name;
+
+    const del = document.createElement('button');
+    del.className = 'pl-song-remove';
+    del.textContent = '✕';
+    del.addEventListener('click', () => {
+      state.currentPlaylistSongs.splice(i, 1);
+      if (state.currentPlaylist) {
+        state.playlists[state.currentPlaylist] = state.currentPlaylistSongs.map(s => s.name);
+      }
+      renderPlaylistEditor();
+      renderPlaylistView();
+    });
+
+    item.appendChild(name);
+    item.appendChild(del);
+    container.appendChild(item);
+  });
+}
+
+// Playlist controls
+document.getElementById('playlist-select').addEventListener('change', function() {
+  const name = this.value;
+  state.currentPlaylist = name || null;
+  if (name && state.playlists[name]) {
+    // Resolve songs from library
+    state.currentPlaylistSongs = resolveSongNames(state.playlists[name]);
+  } else {
+    state.currentPlaylistSongs = [];
+  }
+  renderPlaylistView();
+  renderPlaylistEditor();
+});
+
+document.getElementById('load-pl-btn').addEventListener('click', () => {
+  if (!state.currentPlaylistSongs.length) { alert('No playlist loaded or it is empty.'); return; }
+  state.queue = [...state.currentPlaylistSongs];
+  state.queueIndex = 0;
+  state.shuffledQueue = null;
+  playCurrent();
+  renderQueue();
+  switchTab('queue');
+});
+
+document.getElementById('new-playlist-btn').addEventListener('click', () => {
+  const name = prompt('New playlist name:');
+  if (!name) return;
+  state.playlists[name] = [];
+  state.currentPlaylist = name;
+  state.currentPlaylistSongs = [];
+  renderPlaylistDropdown();
+  document.getElementById('playlist-select').value = name;
+  renderPlaylistView();
+  renderPlaylistEditor();
+});
+
+document.getElementById('save-queue-as-pl-btn').addEventListener('click', () => {
+  const name = prompt('Save queue as playlist (name):');
+  if (!name) return;
+  const q = getActiveQueue();
+  state.playlists[name] = q.map(s => s.name);
+  state.currentPlaylist = name;
+  state.currentPlaylistSongs = [...q];
+  renderPlaylistDropdown();
+  document.getElementById('playlist-select').value = name;
+  renderPlaylistView();
+  renderPlaylistEditor();
+  alert('Saved in memory. Note: playlists are not persisted to disk (browser limitation).');
+});
+
+document.getElementById('save-pl-btn').addEventListener('click', () => {
+  if (!state.currentPlaylist) { alert('No playlist selected.'); return; }
+  state.playlists[state.currentPlaylist] = state.currentPlaylistSongs.map(s => s.name);
+  alert(`Playlist "${state.currentPlaylist}" saved in memory.\nNote: Changes are not written to disk.`);
+});
+
+document.getElementById('clear-pl-btn').addEventListener('click', () => {
+  if (!state.currentPlaylist) return;
+  if (!confirm(`Clear playlist "${state.currentPlaylist}"?`)) return;
+  state.currentPlaylistSongs = [];
+  state.playlists[state.currentPlaylist] = [];
+  renderPlaylistEditor();
+  renderPlaylistView();
+});
+
+function resolveSongNames(names) {
+  // Find songs by name in all albums
+  const result = [];
+  for (const name of names) {
+    for (const album of Object.keys(state.tree)) {
+      const found = state.tree[album].find(s => s.name === name);
+      if (found) { result.push(found); break; }
+    }
+  }
+  return result;
+}
+
+// ============================================================
+// TABS
+// ============================================================
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-'+tab));
+}
+
+// ============================================================
+// CONTEXT MENU
+// ============================================================
+const ctxMenu = document.getElementById('ctx-menu');
+
+function showContextMenu(e, song) {
+  state.ctxTarget = song;
+  ctxMenu.style.display = 'block';
+  const x = Math.min(e.clientX, window.innerWidth - ctxMenu.offsetWidth - 10);
+  const y = Math.min(e.clientY, window.innerHeight - ctxMenu.offsetHeight - 10);
+  ctxMenu.style.left = x + 'px';
+  ctxMenu.style.top = y + 'px';
+}
+
+document.addEventListener('click', () => { ctxMenu.style.display = 'none'; });
+document.addEventListener('contextmenu', e => {
+  // Only prevent default on song rows (handled via event listeners above)
+});
+
+document.getElementById('ctx-play').addEventListener('click', () => {
+  if (state.ctxTarget) jumpToSong(state.ctxTarget);
+});
+
+document.getElementById('ctx-add-next').addEventListener('click', () => {
+  if (!state.ctxTarget) return;
+  const nextIdx = state.queueIndex + 1;
+  state.queue.splice(nextIdx, 0, state.ctxTarget);
+  renderQueue();
+});
+
+document.getElementById('ctx-add-pl').addEventListener('click', () => {
+  if (!state.ctxTarget) return;
+  if (!state.currentPlaylist) {
+    const name = prompt('No playlist selected. Create one (enter name):');
+    if (!name) return;
+    state.playlists[name] = [];
+    state.currentPlaylist = name;
+    state.currentPlaylistSongs = [];
+    renderPlaylistDropdown();
+    document.getElementById('playlist-select').value = name;
+  }
+  // Avoid duplicates
+  if (!state.currentPlaylistSongs.find(s => s.path === state.ctxTarget.path)) {
+    state.currentPlaylistSongs.push(state.ctxTarget);
+    state.playlists[state.currentPlaylist].push(state.ctxTarget.name);
+  }
+  renderPlaylistEditor();
+  renderPlaylistView();
+});
+
+// ============================================================
+// SEARCH
+// ============================================================
+let searchTimeout;
+document.getElementById('search-input').addEventListener('input', function() {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => renderTree(this.value), 150);
+});
+
+// ============================================================
+// UI HELPERS
+// ============================================================
+function updateNowPlaying(song) {
+  document.getElementById('np-title').textContent = song ? song.name : '—';
+  document.getElementById('np-album').textContent = song ? (song.album || 'Root') : 'No track loaded';
+}
+
+function updateQueueHighlight() {
+  document.querySelectorAll('.queue-item').forEach((el, i) => {
+    el.classList.toggle('playing', i === state.queueIndex);
+  });
+  // Scroll
+  const playingEl = document.querySelector('.queue-item.playing');
+  if (playingEl) playingEl.scrollIntoView({ block: 'nearest' });
+}
+
+function updateTreeHighlight() {
+  const cur = currentSong();
+  document.querySelectorAll('.song-row').forEach(row => {
+    row.classList.toggle('playing', cur && row.dataset.path === cur.path);
+  });
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ============================================================
+// KEYBOARD SHORTCUTS
+// ============================================================
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.code === 'Space') { e.preventDefault(); if (audio.paused) audio.play(); else audio.pause(); }
+  if (e.code === 'ArrowRight') { e.preventDefault(); audio.currentTime = Math.min(audio.duration||0, audio.currentTime + 5); }
+  if (e.code === 'ArrowLeft') { e.preventDefault(); audio.currentTime = Math.max(0, audio.currentTime - 5); }
+  if (e.code === 'ArrowUp') { e.preventDefault(); audio.volume = Math.min(1, audio.volume + 0.05); document.getElementById('volume-fill').style.width = (audio.volume*100)+'%'; }
+  if (e.code === 'ArrowDown') { e.preventDefault(); audio.volume = Math.max(0, audio.volume - 0.05); document.getElementById('volume-fill').style.width = (audio.volume*100)+'%'; }
+  if (e.code === 'KeyN' && e.ctrlKey) { e.preventDefault(); playNext(); }
+  if (e.code === 'KeyP' && e.ctrlKey) { e.preventDefault(); playPrev(); }
+});
+</script>
+
+<!-- LIMITATIONS NOTE (hidden comment):
+  1. playlist.json changes cannot be written back to disk (browser security).
+  2. FLAC playback depends on browser codec support (Chrome on Chromebook supports FLAC natively).
+  3. Drag-to-reorder works for queue items.
+  4. Large libraries may slow initial render; a future improvement would be virtual scrolling.
+-->
+</body>
+</html>
