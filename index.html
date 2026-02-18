@@ -664,6 +664,9 @@ const state = {
   currentPlaylist: null,     // name of currently selected playlist
   currentPlaylistSongs: [],  // resolved {name, path, album}
 
+  // Cover art: { albumName: File }
+  covers: {},
+
   // Context menu target
   ctxTarget: null,           // {name, path, album}
 };
@@ -685,18 +688,72 @@ function currentSong() {
 
 function play(song) {
   if (!song || !state.files[song.path]) return;
-  // Revoke old
-  if (audio.src && audio.src.startsWith('blob:')) {
-    // Don't revoke immediately, might still be used
-  }
   const file = state.files[song.path];
   const url = blobUrls[song.path] || URL.createObjectURL(file);
   blobUrls[song.path] = url;
   audio.src = url;
-  audio.play().catch(()=>{});
+  audio.play().then(() => {
+    updateMediaSession(song);  // tell the OS what's playing AFTER playback starts
+  }).catch(()=>{});
   updateNowPlaying(song);
   updateQueueHighlight();
   updateTreeHighlight();
+}
+
+// ============================================================
+// MEDIA SESSION API — shows now-playing on ChromeOS lock screen,
+// system tray, and wires up keyboard media keys
+// ============================================================
+
+// Fallback artwork: a simple green music note SVG (shown if no cover art found)
+const FALLBACK_ART = 'data:image/svg+xml,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">' +
+  '<rect width="512" height="512" fill="#1e1e1e"/>' +
+  '<text x="256" y="330" font-size="260" text-anchor="middle" fill="#1db954">♪</text>' +
+  '</svg>'
+);
+
+function updateMediaSession(song) {
+  if (!('mediaSession' in navigator)) return;
+
+  // Try to find cover art: look for cover.jpg / folder.jpg / cover.png in same album folder
+  let artUrl = FALLBACK_ART;
+  if (song.album && state.covers && state.covers[song.album]) {
+    artUrl = URL.createObjectURL(state.covers[song.album]);
+  }
+
+  // Strip file extension from song name for a cleaner display title
+  const title = song.name.replace(/\.[^/.]+$/, '');
+
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title:  title,
+    artist: '',                        // could parse from filename if you use "Artist - Title.flac" format
+    album:  song.album || 'Unknown Album',
+    artwork: [
+      { src: artUrl, sizes: '512x512', type: 'image/svg+xml' }
+    ]
+  });
+
+  // These only need to be set once but it's safe to re-set them each song
+  navigator.mediaSession.setActionHandler('play',          () => audio.play());
+  navigator.mediaSession.setActionHandler('pause',         () => audio.pause());
+  navigator.mediaSession.setActionHandler('previoustrack', () => playPrev());
+  navigator.mediaSession.setActionHandler('nexttrack',     () => playNext());
+  navigator.mediaSession.setActionHandler('seekto',        (d) => { audio.currentTime = d.seekTime; });
+  navigator.mediaSession.setActionHandler('seekforward',   (d) => { audio.currentTime += d.seekOffset ?? 10; });
+  navigator.mediaSession.setActionHandler('seekbackward',  (d) => { audio.currentTime -= d.seekOffset ?? 10; });
+}
+
+function updatePositionState() {
+  // Keeps the ChromeOS lock screen seek bar in sync
+  if (!('mediaSession' in navigator) || !audio.duration || isNaN(audio.duration)) return;
+  try {
+    navigator.mediaSession.setPositionState({
+      duration:     audio.duration,
+      playbackRate: audio.playbackRate,
+      position:     audio.currentTime,
+    });
+  } catch(e) { /* ignore if not supported */ }
 }
 
 function playCurrent() {
@@ -727,9 +784,13 @@ function playPrev() {
 }
 
 audio.addEventListener('ended', playNext);
-audio.addEventListener('timeupdate', updateProgress);
+audio.addEventListener('timeupdate', () => {
+  updateProgress();
+  updatePositionState();  // keeps ChromeOS lock screen seek bar in sync
+});
 audio.addEventListener('loadedmetadata', () => {
   document.getElementById('time-total').textContent = formatTime(audio.duration);
+  updatePositionState();  // set initial duration as soon as it's known
 });
 
 // ============================================================
@@ -851,6 +912,7 @@ document.getElementById('folder-input').addEventListener('change', async functio
   // Reset
   state.files = {};
   state.tree = {};
+  state.covers = {};
   blobUrls = {};
   state.queue = [];
   state.queueIndex = 0;
@@ -858,26 +920,37 @@ document.getElementById('folder-input').addEventListener('change', async functio
 
   // Collect music files
   const audioExts = ['.flac','.mp3','.ogg','.wav','.m4a'];
+  const imageExts = ['.jpg','.jpeg','.png','.webp'];
+  const coverNames = ['cover','folder','album','front'];
   let playlistJson = null;
 
   for (const file of files) {
     const relPath = file.webkitRelativePath;
     const parts = relPath.split('/');
-    // parts[0] = selected folder (skip), parts[1...] = actual path
-    const innerParts = parts.slice(1); // e.g. ["Album", "song.flac"] or ["song.flac"] or ["playlist.json"]
+    const innerParts = parts.slice(1); // strip top-level selected folder
 
     if (innerParts.length === 1 && innerParts[0] === 'playlist.json') {
       playlistJson = file;
       continue;
     }
 
-    const ext = innerParts[innerParts.length - 1].toLowerCase();
-    const hasAudioExt = audioExts.some(e => ext.endsWith(e.slice(1)));
-    if (!hasAudioExt) continue;
-
-    // Build tree key
-    const songName = innerParts[innerParts.length - 1];
+    const fileName = innerParts[innerParts.length - 1].toLowerCase();
     const album = innerParts.length > 1 ? innerParts.slice(0, -1).join('/') : '';
+
+    // Detect cover art by filename (cover.jpg, folder.png, etc.)
+    const isImage = imageExts.some(e => fileName.endsWith(e));
+    if (isImage) {
+      const baseName = fileName.replace(/\.[^/.]+$/, '');
+      if (coverNames.includes(baseName) && !state.covers[album]) {
+        state.covers[album] = file;
+      }
+      continue;
+    }
+
+    const isAudio = audioExts.some(e => fileName.endsWith(e));
+    if (!isAudio) continue;
+
+    const songName = innerParts[innerParts.length - 1];
     const treePath = innerParts.join('/');
 
     state.files[treePath] = file;
